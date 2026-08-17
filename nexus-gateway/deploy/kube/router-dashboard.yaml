@@ -1,0 +1,39 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: router-dashboard
+  namespace: nexus-gateway
+  labels:
+    app: router-dashboard
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: router-dashboard
+  template:
+    metadata:
+      labels:
+        app: router-dashboard
+    spec:
+      containers:
+      - name: router-dashboard
+        image: nexus-gateway/router-dashboard:latest
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 8084
+        env:
+        - name: SPRING_KAFKA_BOOTSTRAP_SERVERS
+          value: "kafka-cluster-kafka-bootstrap:9092" # Assuming a Strimzi Kafka cluster inside Kubernetes
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: router-dashboard
+  namespace: nexus-gateway
+spec:
+  selector:
+    app: router-dashboard
+  ports:
+  - protocol: TCP
+    port: 8084
+    targetPort: 8084

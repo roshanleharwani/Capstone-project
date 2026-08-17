@@ -1,0 +1,5 @@
+# Created at 2026-08-02T08:14:01.089
+Boot Manifest-JAR contains absolute paths in classpath 'E:\Captsone\nexus-gateway\modules\router-dashboard\target\test-classes'
+Hint: <argLine>-Djdk.net.URLClassPath.disableClassPathURLCheck=true</argLine>
+'other' has different root
+
