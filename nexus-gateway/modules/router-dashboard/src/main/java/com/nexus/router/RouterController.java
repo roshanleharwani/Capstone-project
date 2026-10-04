@@ -40,11 +40,22 @@ public class RouterController {
     @PostMapping("/dispatch")
     public Mono<Map> dispatchRequest(@RequestBody Map<String, Object> requestPayload) {
         long startTime = System.currentTimeMillis();
+        
+        String modelPref = (String) requestPayload.getOrDefault("model_pref", "auto");
+        boolean isHardRoutedTier1 = Boolean.TRUE.equals(requestPayload.get("hard_route_tier1"));
+
+        // 0. Manual Overrides
+        if (isHardRoutedTier1 || "tier1".equalsIgnoreCase(modelPref)) {
+            return processAndMonitor(tier1Connector.executeInference(requestPayload), "TIER1", 1.0, startTime, requestPayload, false);
+        }
+        if ("tier2".equalsIgnoreCase(modelPref)) {
+            return processAndMonitor(tier2Connector.executeInference(requestPayload), "TIER2", 1.0, startTime, requestPayload, false);
+        }
 
         // 1. Fast-Path Bypass Check
         if (cascadeGuard.shouldFastPath(requestPayload)) {
             telemetryPublisher.publishEvent("FAST_PATH_ROUTED", new HashMap<>(requestPayload));
-            return tier1Connector.executeInference(requestPayload); // Send to cheap default model
+            return processAndMonitor(tier1Connector.executeInference(requestPayload), "TIER1", 1.0, startTime, requestPayload, true);
         }
 
         // 2. Stage 1: Predict Compression Ratio
@@ -54,19 +65,20 @@ public class RouterController {
         String selectedTier = modelClassifier.classifyModelTier(requestPayload, rho);
 
         // 4. Execution
-        Mono<Map> responseMono;
-        if ("TIER1".equals(selectedTier)) {
-            responseMono = tier1Connector.executeInference(requestPayload);
-        } else {
-            responseMono = tier2Connector.executeInference(requestPayload);
-        }
+        Mono<Map> responseMono = "TIER1".equals(selectedTier) ? tier1Connector.executeInference(requestPayload) : tier2Connector.executeInference(requestPayload);
 
         // 5. Cascade Guard Post-Hoc Check
+        return processAndMonitor(responseMono, selectedTier, rho, startTime, requestPayload, true);
+    }
+
+    private Mono<Map> processAndMonitor(Mono<Map> responseMono, String selectedTier, double rho, long startTime, Map<String, Object> requestPayload, boolean evaluateCascade) {
         return responseMono.flatMap(response -> {
-            if (!cascadeGuard.evaluateReliability(response)) {
+            boolean useCascadeGuard = Boolean.parseBoolean(System.getProperty("nexus.settings.cascadeGuard", "true"));
+            
+            if (evaluateCascade && "TIER1".equals(selectedTier) && useCascadeGuard && !cascadeGuard.evaluateReliability(response)) {
                 // Escalate: Re-route to a larger model (e.g., Tier 2 fallback)
                 telemetryPublisher.publishEvent("CASCADE_GUARD_ESCALATION", new HashMap<>());
-                return tier2Connector.executeInference(requestPayload);
+                return processAndMonitor(tier2Connector.executeInference(requestPayload), "TIER2", rho, startTime, requestPayload, false);
             }
             
             // Publish Telemetry Success
@@ -76,6 +88,13 @@ public class RouterController {
             telemetryData.put("latencyMs", System.currentTimeMillis() - startTime);
             telemetryPublisher.publishEvent("REQUEST_COMPLETED", telemetryData);
             
+            // Add metrics to HTTP response for the proxy to read
+            try {
+                response.put("router_metrics", telemetryData);
+            } catch (Exception e) {
+                // In case it's an immutable map
+            }
+
             return Mono.just(response);
         });
     }

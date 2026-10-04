@@ -41,7 +41,7 @@ public class DualLayerAuthFilter extends OncePerRequestFilter {
 
         // Skip auth for public endpoints if any (e.g. actuator/health)
         String path = request.getRequestURI();
-        if (path.contains("/actuator") || path.contains("/health") || path.contains("/v3/api-docs")) {
+        if (path.contains("/actuator") || path.contains("/health") || path.contains("/v3/api-docs") || path.contains("/api/v1/dashboard") || path.contains("/api/v1/settings")) {
             filterChain.doFilter(request, response);
             return;
         }

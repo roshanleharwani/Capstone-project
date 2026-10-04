@@ -58,7 +58,6 @@ class CreditLedgerServiceTest {
     @BeforeEach
     void setUp() {
         ReflectionTestUtils.setField(ledgerService, "balanceCacheTtlSeconds", 30L);
-        when(redisTemplate.opsForValue()).thenReturn(valueOps);
     }
 
     // ---- recordTokenBorrow: entry creation ------------------------------
@@ -171,6 +170,7 @@ class CreditLedgerServiceTest {
     @Test
     @DisplayName("getBalance returns cached value on cache HIT without querying DB")
     void getBalance_cacheHit_returnsCachedValue() {
+        when(redisTemplate.opsForValue()).thenReturn(valueOps);
         when(valueOps.get("ledger:balance:cs-dept")).thenReturn("250.5");
 
         double balance = ledgerService.getBalance("cs-dept");
@@ -182,6 +182,7 @@ class CreditLedgerServiceTest {
     @Test
     @DisplayName("getBalance queries DB and populates cache on cache MISS")
     void getBalance_cacheMiss_queriesDbAndPopulatesCache() {
+        when(redisTemplate.opsForValue()).thenReturn(valueOps);
         when(valueOps.get("ledger:balance:cs-dept")).thenReturn(null); // cache miss
         when(ledgerRepository.computeNetBalance("cs-dept")).thenReturn(750.0);
 
@@ -194,6 +195,7 @@ class CreditLedgerServiceTest {
     @Test
     @DisplayName("getBalance returns 0.0 when tenant has no entries (null from DB)")
     void getBalance_noEntries_returnsZero() {
+        when(redisTemplate.opsForValue()).thenReturn(valueOps);
         when(valueOps.get("ledger:balance:new-tenant")).thenReturn(null);
         when(ledgerRepository.computeNetBalance("new-tenant")).thenReturn(null);
 

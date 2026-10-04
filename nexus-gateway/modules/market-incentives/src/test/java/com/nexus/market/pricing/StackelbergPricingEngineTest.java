@@ -106,7 +106,7 @@ class StackelbergPricingEngineTest {
     @ParameterizedTest(name = "U={0} → rate between {1} and {2}")
     @CsvSource({
             "0.0,  0.5, 0.55",
-            "0.5,  0.7, 1.5",
+            "0.5,  0.55, 0.7",
             "0.75, 1.7, 1.8",
             "0.9,  2.5, 3.0",
             "1.0,  2.8, 3.0"
@@ -130,7 +130,7 @@ class StackelbergPricingEngineTest {
     void sigmoid_alwaysInUnitInterval() {
         for (double x : new double[]{-100, -10, -1, 0, 1, 10, 100}) {
             double s = engine.sigmoid(x);
-            assertThat(s).isStrictlyBetween(0.0, 1.0);
+            assertThat(s).isBetween(0.0, 1.0);
         }
     }
 

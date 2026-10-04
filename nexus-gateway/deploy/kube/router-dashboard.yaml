@@ -17,13 +17,13 @@ spec:
     spec:
       containers:
       - name: router-dashboard
-        image: nexus-gateway/router-dashboard:latest
+        image: 611597330624.dkr.ecr.ap-south-1.amazonaws.com/nexus-gateway-router:latest
         imagePullPolicy: IfNotPresent
         ports:
         - containerPort: 8084
         env:
         - name: SPRING_KAFKA_BOOTSTRAP_SERVERS
-          value: "kafka-cluster-kafka-bootstrap:9092" # Assuming a Strimzi Kafka cluster inside Kubernetes
+          value: "nexus-kafka-kafka-bootstrap:9092"
 ---
 apiVersion: v1
 kind: Service

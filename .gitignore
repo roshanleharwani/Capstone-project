@@ -1,0 +1,38 @@
+# Maven build output
+target/
+*.class
+*.jar
+*.war
+*.ear
+
+# Terraform state (sensitive - keep local only)
+terraform.tfstate
+terraform.tfstate.backup
+*.tfstate
+*.tfstate.*
+.terraform/
+
+# Logs
+*.log
+router-logs.txt
+router-logs2.txt
+body_out.txt
+headers_out.txt
+
+# Node.js
+node_modules/
+.next/
+.npm/
+
+# IDE
+.idea/
+*.iml
+.vscode/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+
+# OS
+.DS_Store
+Thumbs.db

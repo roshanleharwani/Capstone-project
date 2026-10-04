@@ -1,67 +1,94 @@
 package com.nexus.ingress.pii;
 
-import com.google.re2j.Matcher;
-import com.google.re2j.Pattern;
+import opennlp.tools.namefind.NameFinderME;
+import opennlp.tools.namefind.TokenNameFinderModel;
+import opennlp.tools.tokenize.SimpleTokenizer;
+import opennlp.tools.util.Span;
 import org.springframework.stereotype.Component;
 
+import jakarta.annotation.PostConstruct;
+import java.io.File;
+import java.io.FileInputStream;
+import java.io.InputStream;
+import java.net.URL;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
 import java.util.List;
 
 /**
- * Pass 3 Transformer NER Scanner: Context-aware Named Entity Recognition (PERSON, ORGANIZATION, LOCATION).
- * Uses contextual heuristic patterns and sidecar NER model interface adapter.
+ * Pass 3 Transformer NER Scanner: Context-aware Named Entity Recognition.
+ * Real ML implementation using Apache OpenNLP Maximum Entropy models.
  */
 @Component
 public class TransformerNERScanner implements PIIScanner {
 
-    // Contextual patterns for entity recognition (Person names, Organizations, Locations)
-    private static final Pattern PERSON_PREFIX_PATTERN = Pattern.compile("(?i)\\b(Mr\\.|Mrs\\.|Ms\\.|Dr\\.|Prof\\.)\\s+([A-Z][a-z]+(?:\\s+[A-Z][a-z]+)?)");
-    private static final Pattern ORG_PATTERN = Pattern.compile("(?i)\\b([A-Z][a-zA-Z0-9&]+(?:\\s+[A-Z][a-zA-Z0-9&]+)*)\\s+(Inc\\.|Corp\\.|LLC|Ltd\\.|University|Department|Group|Technologies)\\b");
-    private static final Pattern CONFIDENTIAL_DOC_PATTERN = Pattern.compile("(?i)\\b(Internal\\s+Project\\s+Code|Confidential\\s+Strategy|Vault\\s+Password)\\b");
+    private NameFinderME personFinder;
+    private NameFinderME orgFinder;
+    private final SimpleTokenizer tokenizer = SimpleTokenizer.INSTANCE;
+
+    @PostConstruct
+    public void initModels() {
+        try {
+            personFinder = new NameFinderME(loadModel("en-ner-person.bin", "https://opennlp.sourceforge.net/models-1.5/en-ner-person.bin"));
+            orgFinder = new NameFinderME(loadModel("en-ner-organization.bin", "https://opennlp.sourceforge.net/models-1.5/en-ner-organization.bin"));
+        } catch (Exception e) {
+            System.err.println("Failed to load OpenNLP models. NER will be degraded: " + e.getMessage());
+        }
+    }
+
+    private TokenNameFinderModel loadModel(String filename, String url) throws Exception {
+        Path tempFile = Path.of(System.getProperty("java.io.tmpdir"), filename);
+        if (!Files.exists(tempFile)) {
+            System.out.println("Downloading OpenNLP model: " + filename);
+            try (InputStream in = new URL(url).openStream()) {
+                Files.copy(in, tempFile, StandardCopyOption.REPLACE_EXISTING);
+            }
+        }
+        try (InputStream in = new FileInputStream(tempFile.toFile())) {
+            return new TokenNameFinderModel(in);
+        }
+    }
 
     @Override
     public List<PIIMatch> scan(String text) {
         List<PIIMatch> matches = new ArrayList<>();
-        if (text == null || text.isBlank()) {
+        if (text == null || text.isBlank() || personFinder == null || orgFinder == null) {
             return matches;
         }
 
-        // 1. Scan Person Entities
-        Matcher personMatcher = PERSON_PREFIX_PATTERN.matcher(text);
-        while (personMatcher.find()) {
-            matches.add(new PIIMatch(
-                    personMatcher.group(2),
-                    "PERSON",
-                    personMatcher.start(2),
-                    personMatcher.end(2),
-                    0.92
-            ));
+        // 1. Tokenize using OpenNLP SimpleTokenizer
+        Span[] tokenSpans = tokenizer.tokenizePos(text);
+        String[] tokens = Span.spansToStrings(tokenSpans, text);
+
+        // 2. Scan Persons
+        synchronized (personFinder) { // NameFinderME is not thread-safe
+            Span[] personSpans = personFinder.find(tokens);
+            matches.addAll(mapSpans(personSpans, tokenSpans, text, "PERSON"));
+            personFinder.clearAdaptiveData();
         }
 
-        // 2. Scan Organization Entities
-        Matcher orgMatcher = ORG_PATTERN.matcher(text);
-        while (orgMatcher.find()) {
-            matches.add(new PIIMatch(
-                    orgMatcher.group(),
-                    "ORGANIZATION",
-                    orgMatcher.start(),
-                    orgMatcher.end(),
-                    0.88
-            ));
+        // 3. Scan Organizations
+        synchronized (orgFinder) {
+            Span[] orgSpans = orgFinder.find(tokens);
+            matches.addAll(mapSpans(orgSpans, tokenSpans, text, "ORGANIZATION"));
+            orgFinder.clearAdaptiveData();
         }
 
-        // 3. Scan Confidential Document / Project Flags
-        Matcher docMatcher = CONFIDENTIAL_DOC_PATTERN.matcher(text);
-        while (docMatcher.find()) {
-            matches.add(new PIIMatch(
-                    docMatcher.group(),
-                    "RESTRICTED_ENTITY",
-                    docMatcher.start(),
-                    docMatcher.end(),
-                    0.95
-            ));
-        }
+        return matches;
+    }
 
+    private List<PIIMatch> mapSpans(Span[] nameSpans, Span[] tokenSpans, String originalText, String type) {
+        List<PIIMatch> matches = new ArrayList<>();
+        for (Span s : nameSpans) {
+            int startChar = tokenSpans[s.getStart()].getStart();
+            int endChar = tokenSpans[s.getEnd() - 1].getEnd();
+            String matchedString = originalText.substring(startChar, endChar);
+            
+            // Map the probability returned by OpenNLP MaxEnt model
+            matches.add(new PIIMatch(matchedString, type, startChar, endChar, s.getProb()));
+        }
         return matches;
     }
 

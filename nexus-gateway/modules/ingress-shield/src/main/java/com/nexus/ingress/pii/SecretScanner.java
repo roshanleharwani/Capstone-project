@@ -16,7 +16,7 @@ public class SecretScanner implements PIIScanner {
 
     private static final Map<String, Pattern> SECRET_PATTERNS = Map.of(
             "AWS_ACCESS_KEY", Pattern.compile("(A3T[A-Z0-9]|AKIA|AGPA|AIDA|AROA|AIPA|ANPA|ANVA|ASIA)[A-Z0-9]{16}"),
-            "OPENAI_API_KEY", Pattern.compile("sk-[a-zA-Z0-9]{32,64}"),
+            "OPENAI_API_KEY", Pattern.compile("sk-[a-zA-Z0-9_\\-]{20,128}"),
             "GENERIC_SECRET_KEY", Pattern.compile("(?i)(api_key|secret_key|access_token|bearer)\\s*[:=]\\s*[\"']?([a-zA-Z0-9_\\-]{20,})[\"']?"),
             "PRIVATE_KEY_BLOCK", Pattern.compile("-----BEGIN (RSA |EC |PGP )?PRIVATE KEY-----")
     );

@@ -130,7 +130,7 @@ public class VectorStoreRepository {
         return sb.toString();
     }
 
-    float[] csvToFloatArray(String csv) {
+    public float[] csvToFloatArray(String csv) {
         if (csv == null || csv.isBlank()) return new float[0];
         String[] parts = csv.split(",");
         float[] arr = new float[parts.length];

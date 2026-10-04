@@ -1,0 +1,32 @@
+spring:
+  application:
+    name: nexus-gateway-app
+
+server:
+  port: 8080
+
+
+  datasource:
+    url: jdbc:postgresql://${DB_HOST:localhost}:5432/nexusgateway
+    username: nexus
+    password: nexus_secret
+    driver-class-name: org.postgresql.Driver
+
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: 6379
+      timeout: 2000ms
+
+  kafka:
+    bootstrap-servers: ${SPRING_KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.apache.kafka.common.serialization.StringSerializer
+    consumer:
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      group-id: nexus-gateway-group
+
+compression:
+  target-ratio: 0.5

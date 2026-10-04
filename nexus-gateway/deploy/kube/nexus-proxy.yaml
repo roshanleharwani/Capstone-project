@@ -1,0 +1,53 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nexus-proxy
+  namespace: nexus-gateway
+  labels:
+    app: nexus-proxy
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: nexus-proxy
+  template:
+    metadata:
+      labels:
+        app: nexus-proxy
+    spec:
+      containers:
+      - name: proxy
+        image: 611597330624.dkr.ecr.ap-south-1.amazonaws.com/nexus-gateway-proxy:latest
+        imagePullPolicy: Always
+        ports:
+        - containerPort: 8080
+        env:
+        - name: SERVER_PORT
+          value: "8080"
+        - name: SPRING_DATASOURCE_URL
+          value: "jdbc:postgresql://postgres-postgresql.nexus-gateway.svc.cluster.local:5432/nexus_gateway"
+        - name: SPRING_DATASOURCE_USERNAME
+          value: "postgres"
+        - name: SPRING_DATASOURCE_PASSWORD
+          value: "nexus_secret"
+        - name: SPRING_DATA_REDIS_HOST
+          value: "valkey-redis-master.nexus-gateway.svc.cluster.local"
+        - name: SPRING_DATA_REDIS_PASSWORD
+          value: "valkey_secret"
+        - name: SPRING_KAFKA_BOOTSTRAP_SERVERS
+          value: "nexus-kafka-kafka-bootstrap.nexus-gateway.svc.cluster.local:9092"
+        - name: VLLM_INFERENCE_URL
+          value: "http://nexus-vllm.nexus-gateway.svc.cluster.local:8000"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: nexus-proxy
+  namespace: nexus-gateway
+spec:
+  selector:
+    app: nexus-proxy
+  ports:
+  - protocol: TCP
+    port: 8080
+    targetPort: 8080

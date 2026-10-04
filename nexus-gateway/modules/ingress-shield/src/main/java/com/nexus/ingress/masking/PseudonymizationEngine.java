@@ -46,7 +46,7 @@ public class PseudonymizationEngine {
 
     public ProcessedPayload sanitizeRequest(String sessionId, ChatCompletionRequest rawRequest) {
         if (rawRequest == null || rawRequest.getMessages() == null) {
-            return new ProcessedPayload(rawRequest, Map.of(), DataClassification.PUBLIC, false);
+            return new ProcessedPayload(rawRequest, Map.of(), DataClassification.PUBLIC, false, Map.of());
         }
 
         String sid = (sessionId != null && !sessionId.isBlank()) ? sessionId : UUID.randomUUID().toString();
@@ -67,9 +67,18 @@ public class PseudonymizationEngine {
 
             String content = message.getContent();
 
-            // Run 3-Pass Scanning Pipeline
+            // Run 3-Pass Scanning Pipeline based on config
             List<PIIScanner.PIIMatch> allMatches = new ArrayList<>();
+            
+            boolean useRegex = Boolean.parseBoolean(System.getProperty("nexus.settings.regexScanner", "true"));
+            boolean useSecret = Boolean.parseBoolean(System.getProperty("nexus.settings.secretScanner", "true"));
+            boolean useNer = Boolean.parseBoolean(System.getProperty("nexus.settings.nerScanner", "true"));
+            
             for (PIIScanner scanner : scanners) {
+                if (!useRegex && scanner instanceof RegexPIIScanner) continue;
+                if (!useSecret && scanner instanceof SecretScanner) continue;
+                if (!useNer && scanner instanceof TransformerNERScanner) continue;
+                
                 allMatches.addAll(scanner.scan(content));
             }
 
@@ -139,8 +148,25 @@ public class PseudonymizationEngine {
         } else if (containsInternal) {
             classification = DataClassification.INTERNAL;
         }
+        
+        Map<String, Integer> piiBreakdown = new HashMap<>();
+        piiBreakdown.put("Regex", 0);
+        piiBreakdown.put("Secret", 0);
+        piiBreakdown.put("NER", 0);
+        
+        for (Map.Entry<String, Integer> entry : entityCounters.entrySet()) {
+            String type = entry.getKey();
+            int count = entry.getValue();
+            if (type.contains("SECRET") || type.contains("KEY") || type.contains("PASSWORD")) {
+                piiBreakdown.put("Secret", piiBreakdown.get("Secret") + count);
+            } else if (type.contains("EMAIL") || type.contains("PHONE") || type.contains("SSN") || type.contains("CREDIT_CARD")) {
+                piiBreakdown.put("Regex", piiBreakdown.get("Regex") + count);
+            } else {
+                piiBreakdown.put("NER", piiBreakdown.get("NER") + count);
+            }
+        }
 
-        return new ProcessedPayload(sanitizedReq, new HashMap<>(rawToPlaceholder), classification, hardRouteTier1);
+        return new ProcessedPayload(sanitizedReq, new HashMap<>(rawToPlaceholder), classification, hardRouteTier1, piiBreakdown);
     }
 
     /**
@@ -174,15 +200,18 @@ public class PseudonymizationEngine {
         private final Map<String, String> pseudonymMapping;
         private final DataClassification classification;
         private final boolean hardRouteTier1;
+        private final Map<String, Integer> piiBreakdown;
 
         public ProcessedPayload(ChatCompletionRequest sanitizedRequest,
                                 Map<String, String> pseudonymMapping,
                                 DataClassification classification,
-                                boolean hardRouteTier1) {
+                                boolean hardRouteTier1,
+                                Map<String, Integer> piiBreakdown) {
             this.sanitizedRequest = sanitizedRequest;
             this.pseudonymMapping = pseudonymMapping;
             this.classification = classification;
             this.hardRouteTier1 = hardRouteTier1;
+            this.piiBreakdown = piiBreakdown;
         }
 
         public ChatCompletionRequest getSanitizedRequest() {
@@ -199,6 +228,10 @@ public class PseudonymizationEngine {
 
         public boolean isHardRouteTier1() {
             return hardRouteTier1;
+        }
+        
+        public Map<String, Integer> getPiiBreakdown() {
+            return piiBreakdown;
         }
     }
 }

@@ -73,6 +73,10 @@ public class MarketIncentiveService {
      * @return {@link MarketApproval} — approved/denied with full market metadata
      */
     public MarketApproval process(String tenantId, long tokensNeeded) {
+        if (!Boolean.parseBoolean(System.getProperty("nexus.settings.stackelberg", "true"))) {
+            return MarketApproval.passThrough(tenantId, tokensNeeded, 50.0);
+        }
+
         log.info("[Market] START tenant={} tokensNeeded={}", tenantId, tokensNeeded);
 
         // Step 1: Check the tenant's own quota

@@ -16,8 +16,13 @@ public class KafkaTelemetryPublisher {
     }
 
     public void publishEvent(String eventType, Map<String, Object> details) {
-        details.put("eventType", eventType);
-        details.put("timestamp", System.currentTimeMillis());
-        kafkaTemplate.send(TOPIC, details);
+        try {
+            details.put("eventType", eventType);
+            details.put("timestamp", System.currentTimeMillis());
+            kafkaTemplate.send(TOPIC, details);
+        } catch (Exception e) {
+            // Ignore telemetry failure (e.g. Kafka unreachable on localhost in EKS)
+            System.err.println("Failed to publish telemetry event: " + e.getMessage());
+        }
     }
 }
