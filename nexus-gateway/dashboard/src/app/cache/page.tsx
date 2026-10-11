@@ -1,130 +1,157 @@
 "use client";
-import { useState, useEffect } from "react";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/Card";
-import { 
-  AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
-  PieChart, Pie, Cell, Legend
-} from "recharts";
-import { Database, Zap, HardDrive, Cpu } from "lucide-react";
-import { motion } from "framer-motion";
 
-const COLORS = ['#3b82f6', '#8b5cf6', '#ef4444'];
+import { Panel } from "@/components/ui/Panel";
+import { KpiStrip } from "@/components/ui/KpiStrip";
+import { DataTable } from "@/components/ui/DataTable";
+import { ChartTooltip } from "@/components/charts/ChartTooltip";
+import { SeriesLegend } from "@/components/charts/SeriesLegend";
+import { LiveControls } from "@/components/ui/LiveControls";
+import { PageHeader } from "@/components/ui/PageHeader";
+import { useLivePoll } from "@/hooks/useLivePoll";
+import { useChartPalette } from "@/hooks/useChartPalette";
+import { useMemo, useState } from "react";
+import {
+  AreaChart, Area, XAxis, YAxis, CartesianGrid, ResponsiveContainer, Tooltip, Brush,
+} from "recharts";
+
+type CachePayload = {
+  cacheHistory: { time: string; hits: number; misses: number }[];
+  evictionData: { name: string; value: number }[];
+  totalHits: number;
+  latencySaved: string;
+  vectorStoreSize: string;
+};
+
+const SAMPLE_EVICT = [
+  { name: "TTL", value: 42 },
+  { name: "LRU", value: 28 },
+  { name: "MMR miss", value: 17 },
+  { name: "Manual", value: 6 },
+];
+
+const SAMPLE_HISTORY = [
+  { time: "10:00", hits: 120, misses: 18 },
+  { time: "11:00", hits: 154, misses: 22 },
+  { time: "12:00", hits: 98, misses: 31 },
+  { time: "13:00", hits: 176, misses: 14 },
+  { time: "14:00", hits: 201, misses: 19 },
+];
+
+const initial: CachePayload = {
+  cacheHistory: SAMPLE_HISTORY,
+  evictionData: SAMPLE_EVICT,
+  totalHits: 0,
+  latencySaved: "0",
+  vectorStoreSize: "0",
+};
 
 export default function CacheAnalytics() {
-  const [cacheHistory, setCacheHistory] = useState<any[]>([]);
-  const [evictionData, setEvictionData] = useState<any[]>([]);
-  const [totalHits, setTotalHits] = useState(0);
-  const [latencySaved, setLatencySaved] = useState("0");
-  const [vectorStoreSize, setVectorStoreSize] = useState("0");
-
-  useEffect(() => {
-    const fetchData = () => {
-      fetch('/api/v1/dashboard/cache')
-        .then(res => res.json())
-        .then(data => {
-          setCacheHistory(data.cacheHistory || []);
-          setEvictionData(data.evictionData || []);
-          setTotalHits(data.totalHits || 0);
-          setLatencySaved(data.latencySaved || "0");
-          setVectorStoreSize(data.vectorStoreSize || "0");
-        })
-        .catch(console.error);
-    };
-
-    fetchData();
-    const interval = setInterval(fetchData, 5000);
-    return () => clearInterval(interval);
-  }, []);
+  const { data, status, paused, setPaused, updatedAt, refresh } = useLivePoll(
+    "/api/v1/dashboard/cache",
+    initial
+  );
+  const palette = useChartPalette();
+  const [kpi, setKpi] = useState("");
+  const [hidden, setHidden] = useState<Record<string, boolean>>({});
+  const evictions = data.evictionData.length ? data.evictionData : SAMPLE_EVICT;
+  const history = data.cacheHistory.length ? data.cacheHistory : SAMPLE_HISTORY;
+  const totalEvictions = evictions.reduce((sum, row) => sum + row.value, 0);
+  const evictionRows = useMemo(
+    () => (kpi === "evict" ? evictions.filter((row) => row.value >= 20) : evictions),
+    [evictions, kpi]
+  );
 
   return (
-    <div className="space-y-8 pb-10">
-      <div className="flex items-center gap-3 mb-6">
-        <Database className="w-8 h-8 text-primary" />
-        <h1 className="text-3xl font-bold text-white">Semantic Cache Analytics</h1>
-      </div>
+    <div className="space-y-4 pb-8">
+      <PageHeader
+        title="Cache"
+        crumbs={["prod", "nexus-gw", "observe", "cache"]}
+        actions={
+          <LiveControls
+            paused={paused}
+            onToggle={() => setPaused((value) => !value)}
+            onRefresh={() => void refresh()}
+            updatedAt={updatedAt}
+            status={status}
+          />
+        }
+      />
 
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-        <Card className="relative overflow-hidden group">
-          <div className="absolute top-0 right-0 p-4 opacity-10 transform translate-x-4 -translate-y-4 group-hover:scale-110 group-hover:opacity-20 transition-all duration-500">
-            <Zap className="w-24 h-24 text-accent" />
+      <KpiStrip
+        selectedId={kpi}
+        onSelect={setKpi}
+        items={[
+          { id: "hits", label: "Cache hits", value: data.totalHits.toLocaleString(), hint: "pgvector", tone: "success" },
+          { id: "lat", label: "Latency saved", value: `${data.latencySaved}s`, tone: "info" },
+          { id: "store", label: "Vector store", value: `${data.vectorStoreSize} GB`, tone: "neutral" },
+          { id: "evict", label: "Evictions", value: String(totalEvictions), hint: kpi === "evict" ? "count ≥ 20" : "click to isolate", tone: "neutral" },
+        ]}
+      />
+
+      <div className="grid grid-cols-1 gap-3 xl:grid-cols-5">
+        <Panel title="cache.throughput" meta="drag brush to zoom" className="xl:col-span-3">
+          <SeriesLegend
+            hidden={hidden}
+            onToggle={(id) => setHidden((prev) => ({ ...prev, [id]: !prev[id] }))}
+            series={[
+              { id: "hits", label: "Hits", color: "#3fb950" },
+              { id: "misses", label: "Misses", color: "#f85149", dashed: true },
+            ]}
+          />
+          <div className="h-[280px] w-full">
+            <ResponsiveContainer width="100%" height="100%">
+              <AreaChart data={history} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
+                <XAxis dataKey="time" stroke={palette.axis} fontSize={11} tickLine={false} axisLine={false} />
+                <YAxis stroke={palette.axis} fontSize={11} tickLine={false} axisLine={false} />
+                <CartesianGrid strokeDasharray="2 4" stroke={palette.grid} vertical={false} />
+                <Tooltip content={<ChartTooltip />} />
+                {!hidden.hits ? (
+                  <Area type="monotone" dataKey="hits" name="Hits" stroke="#3fb950" strokeWidth={1.5} fill="#3fb950" fillOpacity={0.12} />
+                ) : null}
+                {!hidden.misses ? (
+                  <Area type="monotone" dataKey="misses" name="Misses" stroke="#f85149" strokeWidth={1.5} strokeDasharray="4 3" fill="#f85149" fillOpacity={0.08} />
+                ) : null}
+                <Brush dataKey="time" height={16} stroke={palette.axis} fill={palette.cursor} travellerWidth={8} />
+              </AreaChart>
+            </ResponsiveContainer>
           </div>
-          <CardHeader className="mb-2"><CardTitle className="text-sm font-medium text-muted-foreground">Total Cache Hits</CardTitle></CardHeader>
-          <CardContent>
-            <div className="text-3xl font-bold text-white mb-2">{totalHits.toLocaleString()}</div>
-            <p className="text-xs font-semibold text-accent">+14% <span className="text-muted-foreground font-normal ml-1">from yesterday</span></p>
-          </CardContent>
-        </Card>
+        </Panel>
 
-        <Card className="relative overflow-hidden group">
-          <div className="absolute top-0 right-0 p-4 opacity-10 transform translate-x-4 -translate-y-4 group-hover:scale-110 group-hover:opacity-20 transition-all duration-500">
-            <Cpu className="w-24 h-24 text-primary" />
-          </div>
-          <CardHeader className="mb-2"><CardTitle className="text-sm font-medium text-muted-foreground">Latency Saved</CardTitle></CardHeader>
-          <CardContent>
-            <div className="text-3xl font-bold text-white mb-2">{latencySaved}s</div>
-            <p className="text-xs font-semibold text-accent">Average response time dropped</p>
-          </CardContent>
-        </Card>
-
-        <Card className="relative overflow-hidden group">
-          <div className="absolute top-0 right-0 p-4 opacity-10 transform translate-x-4 -translate-y-4 group-hover:scale-110 group-hover:opacity-20 transition-all duration-500">
-            <HardDrive className="w-24 h-24 text-secondary" />
-          </div>
-          <CardHeader className="mb-2"><CardTitle className="text-sm font-medium text-muted-foreground">Vector Store Size</CardTitle></CardHeader>
-          <CardContent>
-            <div className="text-3xl font-bold text-white mb-2">{vectorStoreSize} GB</div>
-            <p className="text-xs font-semibold text-muted-foreground">pgvector (PostgreSQL)</p>
-          </CardContent>
-        </Card>
-      </div>
-
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        <Card className="lg:col-span-2">
-          <CardHeader><CardTitle>Cache Performance Over Time</CardTitle></CardHeader>
-          <CardContent>
-            <div className="h-[350px] w-full mt-4">
-              <ResponsiveContainer width="100%" height="100%">
-                <AreaChart data={cacheHistory} margin={{ top: 10, right: 30, left: 0, bottom: 0 }}>
-                  <defs>
-                    <linearGradient id="colorHits" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%" stopColor="#10b981" stopOpacity={0.4}/>
-                      <stop offset="95%" stopColor="#10b981" stopOpacity={0}/>
-                    </linearGradient>
-                    <linearGradient id="colorMisses" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%" stopColor="#ef4444" stopOpacity={0.4}/>
-                      <stop offset="95%" stopColor="#ef4444" stopOpacity={0}/>
-                    </linearGradient>
-                  </defs>
-                  <XAxis dataKey="time" stroke="#475569" fontSize={12} tickLine={false} axisLine={false} />
-                  <YAxis stroke="#475569" fontSize={12} tickLine={false} axisLine={false} />
-                  <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" vertical={false} />
-                  <Tooltip contentStyle={{ backgroundColor: '#0f172a', borderColor: '#334155', borderRadius: '8px' }} />
-                  <Area type="monotone" dataKey="hits" name="Cache Hits" stroke="#10b981" strokeWidth={3} fillOpacity={1} fill="url(#colorHits)" />
-                  <Area type="monotone" dataKey="misses" name="Cache Misses" stroke="#ef4444" strokeWidth={3} fillOpacity={1} fill="url(#colorMisses)" />
-                </AreaChart>
-              </ResponsiveContainer>
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader><CardTitle>Eviction Reasons</CardTitle></CardHeader>
-          <CardContent className="flex items-center justify-center">
-            <div className="h-[350px] w-full mt-4">
-              <ResponsiveContainer width="100%" height="100%">
-                <PieChart>
-                  <Pie data={evictionData} cx="50%" cy="45%" innerRadius={80} outerRadius={110} paddingAngle={5} dataKey="value" stroke="none">
-                    {evictionData.map((entry, index) => (
-                      <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
-                    ))}
-                  </Pie>
-                  <Tooltip contentStyle={{ backgroundColor: '#0f172a', borderColor: '#334155', borderRadius: '8px' }} />
-                  <Legend verticalAlign="bottom" height={36} iconType="circle" />
-                </PieChart>
-              </ResponsiveContainer>
-            </div>
-          </CardContent>
-        </Card>
+        <Panel title="cache.eviction" meta="reason" className="xl:col-span-2">
+          <DataTable
+            empty="No eviction samples"
+            rowKey={(row) => row.name}
+            rows={evictionRows}
+            copyValue={(row) => `${row.name}\t${row.value}`}
+            renderExpanded={(row) => (
+              <p>
+                {row.name}: {row.value} ({totalEvictions ? Math.round((row.value / totalEvictions) * 100) : 0}% of window)
+              </p>
+            )}
+            columns={[
+              { id: "name", header: "Reason", value: (row) => row.name },
+              { id: "value", header: "Count", align: "right", mono: true, value: (row) => row.value },
+              {
+                id: "share",
+                header: "Share",
+                align: "right",
+                mono: true,
+                value: (row) => (totalEvictions ? `${Math.round((row.value / totalEvictions) * 100)}%` : "0%"),
+                render: (row) => {
+                  const pct = totalEvictions ? Math.round((row.value / totalEvictions) * 100) : 0;
+                  return (
+                    <span className="inline-flex w-full items-center justify-end gap-2">
+                      <span className="h-1.5 w-16 overflow-hidden bg-muted">
+                        <span className="block h-full bg-primary" style={{ width: `${pct}%` }} />
+                      </span>
+                      {pct}%
+                    </span>
+                  );
+                },
+              },
+            ]}
+          />
+        </Panel>
       </div>
     </div>
   );

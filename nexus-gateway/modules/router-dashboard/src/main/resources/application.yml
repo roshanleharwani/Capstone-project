@@ -16,7 +16,7 @@ nexus:
     region: ap-south-1
     model-id: meta.llama3-8b-instruct-v1:0
 
-# OpenAI — Tier 2 inference
+# OpenAI — Tier 2 inference (set OPENAI_API_KEY in the environment or a local .env)
 openai:
   api:
-    key: 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
+    key: ${OPENAI_API_KEY:}

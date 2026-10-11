@@ -1,22 +1,15 @@
 import { cn } from "@/lib/utils";
-import { motion, HTMLMotionProps } from "framer-motion";
 
-interface CardProps extends HTMLMotionProps<"div"> {}
+interface CardProps extends React.HTMLAttributes<HTMLDivElement> {}
 
 export function Card({ className, children, ...props }: CardProps) {
   return (
-    <motion.div
-      initial={{ opacity: 0, y: 20 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.4, ease: "easeOut" }}
-      className={cn(
-        "glass rounded-xl p-6 transition-all duration-300 hover:shadow-glow-primary",
-        className
-      )}
+    <div
+      className={cn("rounded-md border border-card-border bg-card p-4", className)}
       {...props}
     >
       {children}
-    </motion.div>
+    </div>
   );
 }
 
@@ -24,7 +17,7 @@ export function CardHeader({
   className,
   ...props
 }: React.HTMLAttributes<HTMLDivElement>) {
-  return <div className={cn("flex flex-col space-y-1.5 mb-4", className)} {...props} />;
+  return <div className={cn("mb-3 flex flex-col gap-1", className)} {...props} />;
 }
 
 export function CardTitle({
@@ -32,10 +25,7 @@ export function CardTitle({
   ...props
 }: React.HTMLAttributes<HTMLHeadingElement>) {
   return (
-    <h3
-      className={cn("font-semibold leading-none tracking-tight text-white", className)}
-      {...props}
-    />
+    <h3 className={cn("text-sm font-medium text-card-foreground", className)} {...props} />
   );
 }
 

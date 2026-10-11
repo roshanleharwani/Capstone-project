@@ -1,10 +1,24 @@
 import type { Metadata } from "next";
-
+import Script from "next/script";
+import { Fira_Sans, Fira_Code } from "next/font/google";
 import "./globals.css";
-import { Sidebar } from "@/components/layout/Sidebar";
-import { Header } from "@/components/layout/Header";
+import { AppShell } from "@/components/layout/AppShell";
+import { ThemeProvider } from "@/components/theme/ThemeProvider";
+import { THEME_BOOTSTRAP_SCRIPT } from "@/lib/theme";
 
+const firaSans = Fira_Sans({
+  subsets: ["latin"],
+  weight: ["400", "500", "600"],
+  display: "swap",
+  variable: "--font-fira-sans",
+});
 
+const firaCode = Fira_Code({
+  subsets: ["latin"],
+  weight: ["400", "500", "600"],
+  display: "swap",
+  variable: "--font-fira-code",
+});
 
 export const metadata: Metadata = {
   title: "Nexus Gateway Dashboard",
@@ -17,15 +31,14 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en" className="dark">
-      <body className={`antialiased flex bg-background`}>
-        <Sidebar />
-        <main className="flex-1 ml-64 flex flex-col min-h-screen">
-          <Header />
-          <div className="flex-1 p-8 overflow-y-auto">
-            {children}
-          </div>
-        </main>
+    <html lang="en" className={`${firaSans.variable} ${firaCode.variable}`} suppressHydrationWarning>
+      <body className={`${firaSans.className} min-h-screen antialiased`}>
+        <Script id="nexus-theme" strategy="beforeInteractive">
+          {THEME_BOOTSTRAP_SCRIPT}
+        </Script>
+        <ThemeProvider>
+          <AppShell>{children}</AppShell>
+        </ThemeProvider>
       </body>
     </html>
   );
