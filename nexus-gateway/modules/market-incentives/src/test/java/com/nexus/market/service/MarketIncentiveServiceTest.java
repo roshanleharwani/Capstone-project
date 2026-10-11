@@ -1,11 +1,9 @@
 package com.nexus.market.service;
 
-import com.nexus.market.auction.AuctionResult;
-import com.nexus.market.auction.TenantBid;
+import com.nexus.market.auction.PendingBidRegistry;
 import com.nexus.market.auction.VcgAuctionSolver;
 import com.nexus.market.ledger.CreditLedgerService;
 import com.nexus.market.pricing.StackelbergPricingEngine;
-import com.nexus.market.quota.QuotaCheckResult;
 import com.nexus.market.quota.TenantQuotaManager;
 import com.nexus.market.quota.TenantQuotaRepository;
 import org.junit.jupiter.api.BeforeEach;
@@ -49,7 +47,8 @@ import static org.mockito.Mockito.verifyNoInteractions;
         MarketIncentiveService.class,
         TenantQuotaManager.class,
         StackelbergPricingEngine.class,
-        VcgAuctionSolver.class
+        VcgAuctionSolver.class,
+        PendingBidRegistry.class
 })
 @DisplayName("MarketIncentiveService Integration Tests")
 class MarketIncentiveServiceTest {
@@ -99,8 +98,8 @@ class MarketIncentiveServiceTest {
         com.nexus.market.quota.TenantQuota surplusTenant = new com.nexus.market.quota.TenantQuota("admin-dept", 1_000_000L, 0L, 0.0, java.time.Instant.now().plus(1, java.time.temporal.ChronoUnit.DAYS));
         quotaRepository.save(surplusTenant);
 
-        // Step 3: ledger returns a txId
-        when(ledgerService.recordTokenBorrow(eq("cs-dept"), eq("SYSTEM_POOL"), eq(150_000L), anyDouble()))
+        // Step 3: ledger returns a txId — charged to the real surplus lender at VCG second-price
+        when(ledgerService.recordTokenBorrow(eq("cs-dept"), eq("admin-dept"), eq(150_000L), anyDouble()))
                 .thenReturn("tx-abc-123");
 
         MarketIncentiveService.MarketApproval result = service.process("cs-dept", 200_000L);
@@ -110,8 +109,15 @@ class MarketIncentiveServiceTest {
         assertThat(result.getTokensBorrowed()).isEqualTo(150_000L);
         assertThat(result.getTransactionId()).isEqualTo("tx-abc-123");
 
-        // Verify ledger was recorded
-        verify(ledgerService).recordTokenBorrow(eq("cs-dept"), eq("SYSTEM_POOL"), eq(150_000L), anyDouble());
+        // Lender surplus must shrink; borrower must consume the request tokens
+        var admin = quotaRepository.findByTenantId("admin-dept").orElseThrow();
+        var cs = quotaRepository.findByTenantId("cs-dept").orElseThrow();
+        assertThat(admin.getUsedTokens()).isEqualTo(150_000L);
+        assertThat(cs.getDailyLimit()).isEqualTo(250_000L);
+        assertThat(cs.getUsedTokens()).isEqualTo(250_000L);
+
+        verify(ledgerService).recordTokenBorrow(eq("cs-dept"), eq("admin-dept"), eq(150_000L), anyDouble());
+        verify(ledgerService, never()).recordTokenBorrow(eq("cs-dept"), eq("SYSTEM_POOL"), anyLong(), anyDouble());
     }
 
 

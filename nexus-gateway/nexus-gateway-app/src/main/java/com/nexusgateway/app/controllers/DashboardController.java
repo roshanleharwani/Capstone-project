@@ -379,35 +379,43 @@ public class DashboardController {
         Map<Integer, Double> hourlyRates = new HashMap<>();
         Map<Integer, Integer> hourlyCounts = new HashMap<>();
         
-        for (int i = 0; i < ledgers.size(); i++) {
-            LedgerEntry l = ledgers.get(i);
+        // Only DEBIT rows = borrow side of the double-entry pair (avoid duplicate CREDIT rows)
+        List<LedgerEntry> borrowEntries = ledgers.stream()
+                .filter(l -> l.getEntryType() == LedgerEntry.EntryType.DEBIT)
+                .filter(l -> l.getDescription() != null && l.getDescription().contains("BORROW"))
+                .toList();
+
+        for (int i = 0; i < borrowEntries.size(); i++) {
+            LedgerEntry l = borrowEntries.get(i);
             long tokens = 0;
             double rate = 0.0;
+            String txUuid = l.getId();
             try {
                 String desc = l.getDescription();
                 if (desc != null && desc.contains("tokens @")) {
                     String[] parts = desc.split(" ");
                     for (int j = 0; j < parts.length; j++) {
-                        if (parts[j].equals("tokens")) tokens = Long.parseLong(parts[j-1]);
-                        else if (parts[j].equals("credits/kT")) rate = Double.parseDouble(parts[j-1]);
+                        if (parts[j].startsWith("TXN:") && parts[j].length() > 4) {
+                            txUuid = parts[j].substring(4);
+                        }
+                        if (parts[j].equals("tokens") && j > 0) tokens = Long.parseLong(parts[j-1]);
+                        else if (parts[j].equals("credits/kT") && j > 0) rate = Double.parseDouble(parts[j-1]);
                     }
                 }
-            } catch(Exception e) {}
-            
-            // Add to transaction feed (max 10)
-            if (i < 10) {
+            } catch (Exception ignored) {}
+
+            if (ledgerTransactions.size() < 10) {
                 Map<String, Object> tx = new HashMap<>();
-                tx.put("txId", "TXN-" + l.getTransactionHash().substring(0, 6));
+                tx.put("txId", txUuid != null && txUuid.length() >= 8 ? txUuid.substring(0, 8) : "tx");
                 tx.put("borrower", l.getTenantId());
-                tx.put("lender", l.getEntryType() == LedgerEntry.EntryType.CREDIT ? "SYSTEM" : l.getCounterpartyId());
-                tx.put("tokens", tokens > 0 ? tokens : (long)(l.getAmount() * 100)); 
+                tx.put("lender", l.getCounterpartyId() != null ? l.getCounterpartyId() : "SYSTEM");
+                tx.put("tokens", tokens > 0 ? tokens : Math.round(l.getAmount() * 1000));
                 tx.put("rate", rate > 0 ? rate : currentExchangeRate);
                 tx.put("credits", l.getAmount());
                 tx.put("time", l.getTimestamp().atZone(ZoneId.systemDefault()).format(timeFormatter));
                 ledgerTransactions.add(tx);
             }
-            
-            // Aggregate for trend chart
+
             if (rate > 0) {
                 int hour = l.getTimestamp().atZone(ZoneId.systemDefault()).getHour();
                 hourlyRates.put(hour, hourlyRates.getOrDefault(hour, 0.0) + rate);

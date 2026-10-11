@@ -57,6 +57,9 @@ class OpenAIChatControllerTest {
         MarketApproval approval = org.mockito.Mockito.mock(MarketApproval.class);
         when(approval.isApproved()).thenReturn(true);
         when(approval.getTokensBorrowed()).thenReturn(50L);
+        when(approval.getQuotaRemaining()).thenReturn(1000L);
+        when(approval.getCreditsCharged()).thenReturn(1.5);
+        when(approval.isAuctionCleared()).thenReturn(true);
         when(marketIncentiveService.process(anyString(), anyLong())).thenReturn(approval);
 
         ChatMessage userMsg = new ChatMessage("user", "Hello, please contact me at john.smith@example.com.");

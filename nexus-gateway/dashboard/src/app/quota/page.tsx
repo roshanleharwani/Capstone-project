@@ -69,7 +69,10 @@ export default function MarketQuota() {
   const palette = useChartPalette();
   const [tenant, setTenant] = useState("");
   const [hidden, setHidden] = useState<Record<string, boolean>>({});
-  const source = data.ledgerTransactions.length ? data.ledgerTransactions : SAMPLE_TX;
+  // Prefer live ledger; only fall back to samples when the API is unreachable.
+  const source = status === "error" || status === "loading"
+    ? (data.ledgerTransactions.length ? data.ledgerTransactions : SAMPLE_TX)
+    : data.ledgerTransactions;
   const rows = useMemo(
     () => (tenant ? source.filter((row) => row.borrower === tenant || row.lender === tenant) : source),
     [source, tenant]
