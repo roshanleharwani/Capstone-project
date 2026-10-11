@@ -10,11 +10,14 @@ spring:
       key-serializer: org.apache.kafka.common.serialization.StringSerializer
       value-serializer: org.springframework.kafka.support.serializer.JsonSerializer
 
-# AWS Bedrock — Tier 1 inference (replaces self-hosted vLLM)
+# AWS Bedrock — Tier 1 inference
 nexus:
   bedrock:
     region: ap-south-1
     model-id: meta.llama3-8b-instruct-v1:0
+  # Tier-3 self-hosted vLLM on GPU node group (g4dn.xlarge, ap-south-1)
+  vllm:
+    model-id: llama3-8b-instruct
 
 # OpenAI — Tier 2 inference (set OPENAI_API_KEY in the environment or a local .env)
 openai:
