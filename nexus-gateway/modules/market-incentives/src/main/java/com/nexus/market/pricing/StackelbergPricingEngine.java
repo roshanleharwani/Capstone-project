@@ -68,6 +68,17 @@ public class StackelbergPricingEngine {
     private double utilizationThreshold;
 
     /**
+     * Borrowers refuse to enter the auction when the leader price is above this
+     * fraction of {@code p_max} (near-saturation / panic pricing).
+     */
+    @Value("${market.pricing.max-borrow-ratio:0.95}")
+    private double maxBorrowRatio;
+
+    /** Hard cap on tokens a single deficit request may attempt to borrow. */
+    @Value("${market.pricing.max-borrow-tokens:2000000}")
+    private long maxBorrowTokens;
+
+    /**
      * Computes the current token exchange rate based on system-wide utilization.
      *
      * <p>This is the core Stage 1 (Leader) decision in the Stackelberg game.
@@ -115,7 +126,11 @@ public class StackelbergPricingEngine {
      * @return {@code true} if the tenant should participate in the auction as a borrower
      */
     public boolean shouldBorrow(long deficitTokens, double exchangeRate) {
-        return deficitTokens > 0 && exchangeRate <= pMax;
+        if (deficitTokens <= 0 || deficitTokens > maxBorrowTokens) {
+            return false;
+        }
+        double ceiling = pMax * Math.max(0.0, Math.min(1.0, maxBorrowRatio));
+        return exchangeRate <= ceiling;
     }
 
     // ---- Mathematical utilities ------------------------------------------

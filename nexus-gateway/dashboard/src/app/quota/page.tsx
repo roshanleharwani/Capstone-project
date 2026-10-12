@@ -1,157 +1,206 @@
 "use client";
-import { useState, useEffect } from "react";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/Card";
-import { 
-  LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
-  BarChart, Bar
+
+import { Panel } from "@/components/ui/Panel";
+import { KpiStrip } from "@/components/ui/KpiStrip";
+import { DataTable } from "@/components/ui/DataTable";
+import { ChartTooltip } from "@/components/charts/ChartTooltip";
+import { SeriesLegend } from "@/components/charts/SeriesLegend";
+import { LiveControls } from "@/components/ui/LiveControls";
+import { PageHeader } from "@/components/ui/PageHeader";
+import { useLivePoll } from "@/hooks/useLivePoll";
+import { useChartPalette } from "@/hooks/useChartPalette";
+import { useMemo, useState } from "react";
+import {
+  LineChart, Line, XAxis, YAxis, CartesianGrid, ResponsiveContainer,
+  BarChart, Bar, Tooltip, Brush,
 } from "recharts";
-import { TrendingUp, Coins, Activity, Users } from "lucide-react";
-import { motion } from "framer-motion";
+
+type Tx = {
+  txId: string;
+  borrower: string;
+  lender: string;
+  tokens: number;
+  rate: number;
+  credits: number;
+  time: string;
+};
+
+type QuotaPayload = {
+  priceTrendData: { time: string; rate: number }[];
+  tenantQuotaData: { name: string; used: number; limit: number }[];
+  ledgerTransactions: Tx[];
+  currentExchangeRate: number;
+  systemUtilization: number;
+  surplusPoolSize: number;
+};
+
+const SAMPLE_TX: Tx[] = [
+  { txId: "tx-9f2a", borrower: "CS Dept", lender: "Eng Dept", tokens: 12000, rate: 2.8, credits: 33.6, time: "14:00:58" },
+  { txId: "tx-9f19", borrower: "Bio Dept", lender: "Admin", tokens: 8000, rate: 3.1, credits: 24.8, time: "13:44:12" },
+  { txId: "tx-9eec", borrower: "Admin", lender: "Eng Dept", tokens: 4500, rate: 2.6, credits: 11.7, time: "13:21:03" },
+  { txId: "tx-9ed1", borrower: "CS Dept", lender: "Bio Dept", tokens: 16000, rate: 2.9, credits: 46.4, time: "12:58:40" },
+];
+
+const initial: QuotaPayload = {
+  priceTrendData: [
+    { time: "10:00", rate: 2.4 },
+    { time: "11:00", rate: 2.6 },
+    { time: "12:00", rate: 2.9 },
+    { time: "13:00", rate: 2.7 },
+    { time: "14:00", rate: 2.8 },
+  ],
+  tenantQuotaData: [
+    { name: "CS Dept", used: 72000, limit: 100000 },
+    { name: "Bio Dept", used: 41000, limit: 80000 },
+    { name: "Admin", used: 18000, limit: 50000 },
+    { name: "Eng Dept", used: 56000, limit: 120000 },
+  ],
+  ledgerTransactions: SAMPLE_TX,
+  currentExchangeRate: 2.8,
+  systemUtilization: 0,
+  surplusPoolSize: 0,
+};
 
 export default function MarketQuota() {
-  const [priceTrendData, setPriceTrendData] = useState<any[]>([]);
-  const [tenantQuotaData, setTenantQuotaData] = useState<any[]>([]);
-  const [ledgerTransactions, setLedgerTransactions] = useState<any[]>([]);
-  const [currentExchangeRate, setCurrentExchangeRate] = useState(2.8);
-  const [systemUtilization, setSystemUtilization] = useState(0);
-  const [surplusPoolSize, setSurplusPoolSize] = useState(0);
-
-  useEffect(() => {
-    const fetchData = () => {
-      fetch('/api/v1/dashboard/quota')
-        .then(res => res.json())
-        .then(data => {
-          setPriceTrendData(data.priceTrendData || []);
-          setTenantQuotaData(data.tenantQuotaData || []);
-          setLedgerTransactions(data.ledgerTransactions || []);
-          setCurrentExchangeRate(data.currentExchangeRate || 2.8);
-          setSystemUtilization(data.systemUtilization || 0);
-          setSurplusPoolSize(data.surplusPoolSize || 0);
-        })
-        .catch(console.error);
-    };
-
-    fetchData();
-    const interval = setInterval(fetchData, 5000);
-    return () => clearInterval(interval);
-  }, []);
+  const { data, status, paused, setPaused, updatedAt, refresh } = useLivePoll(
+    "/api/v1/dashboard/quota",
+    initial
+  );
+  const palette = useChartPalette();
+  const [tenant, setTenant] = useState("");
+  const [hidden, setHidden] = useState<Record<string, boolean>>({});
+  // Prefer live ledger; only fall back to samples when the API is unreachable.
+  const source = status === "error" || status === "loading"
+    ? (data.ledgerTransactions.length ? data.ledgerTransactions : SAMPLE_TX)
+    : data.ledgerTransactions;
+  const rows = useMemo(
+    () => (tenant ? source.filter((row) => row.borrower === tenant || row.lender === tenant) : source),
+    [source, tenant]
+  );
 
   return (
-    <div className="space-y-8 pb-10">
-      <div className="flex items-center gap-3 mb-6">
-        <TrendingUp className="w-8 h-8 text-secondary" />
-        <h1 className="text-3xl font-bold text-white">Market Incentives & Quota</h1>
+    <div className="space-y-4 pb-8">
+      <PageHeader
+        title="Quota"
+        crumbs={["prod", "nexus-gw", "control", "quota"]}
+        actions={
+          <LiveControls
+            paused={paused}
+            onToggle={() => setPaused((value) => !value)}
+            onRefresh={() => void refresh()}
+            updatedAt={updatedAt}
+            status={status}
+          />
+        }
+      />
+
+      <KpiStrip
+        selectedId={tenant ? "tx" : ""}
+        onSelect={(id) => {
+          if (id !== "tx") setTenant("");
+        }}
+        items={[
+          { id: "fx", label: "FX cr/kT", value: data.currentExchangeRate.toFixed(1), hint: "Stackelberg", tone: "info" },
+          {
+            id: "util",
+            label: "Utilization",
+            value: `${data.systemUtilization}%`,
+            hint: data.systemUtilization > 70 ? "High load" : "Nominal",
+            tone: data.systemUtilization > 70 ? "danger" : "success",
+          },
+          { id: "pool", label: "Surplus pool", value: `${(data.surplusPoolSize / 1000).toFixed(1)}k tok`, tone: "neutral" },
+          { id: "tx", label: "Ledger rows", value: String(rows.length), hint: tenant || "click a tenant bar", tone: "neutral" },
+        ]}
+      />
+
+      <Panel title="capacity.load">
+        <div className="flex items-center justify-between font-mono text-[11px] text-muted-foreground">
+          <span>system.utilization</span>
+          <span className="text-foreground">{data.systemUtilization}%</span>
+        </div>
+        <div className="mt-2 h-2 bg-muted">
+          <div
+            className={data.systemUtilization > 80 ? "h-full bg-destructive" : "h-full bg-accent"}
+            style={{ width: `${Math.min(data.systemUtilization, 100)}%` }}
+          />
+        </div>
+      </Panel>
+
+      <div className="grid grid-cols-1 gap-3 xl:grid-cols-2">
+        <Panel title="price.stackelberg" meta="cr / 1k tok · brush zoom">
+          <div className="h-[240px] w-full">
+            <ResponsiveContainer width="100%" height="100%">
+              <LineChart data={data.priceTrendData} margin={{ top: 8, right: 12, left: 0, bottom: 0 }}>
+                <CartesianGrid strokeDasharray="2 4" stroke={palette.grid} vertical={false} />
+                <XAxis dataKey="time" stroke={palette.axis} fontSize={11} tickLine={false} axisLine={false} />
+                <YAxis stroke={palette.axis} fontSize={11} tickLine={false} axisLine={false} />
+                <Tooltip content={<ChartTooltip />} />
+                <Line type="stepAfter" dataKey="rate" name="Rate" stroke="#4493f8" strokeWidth={1.5} dot={false} />
+                <Brush dataKey="time" height={16} stroke={palette.axis} fill={palette.cursor} travellerWidth={8} />
+              </LineChart>
+            </ResponsiveContainer>
+          </div>
+        </Panel>
+
+        <Panel title="tenant.quota" meta={tenant ? `filter ${tenant}` : "click bar to filter ledger"}>
+          <SeriesLegend
+            hidden={hidden}
+            onToggle={(id) => setHidden((prev) => ({ ...prev, [id]: !prev[id] }))}
+            series={[
+              { id: "used", label: "Used", color: "#4493f8" },
+              { id: "limit", label: "Limit", color: "#656d76" },
+            ]}
+          />
+          <div className="h-[240px] w-full">
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart data={data.tenantQuotaData} margin={{ top: 8, right: 8, left: -12, bottom: 0 }}>
+                <CartesianGrid strokeDasharray="2 4" stroke={palette.grid} vertical={false} />
+                <XAxis dataKey="name" stroke={palette.axis} fontSize={11} tickLine={false} axisLine={false} />
+                <YAxis stroke={palette.axis} fontSize={11} tickLine={false} axisLine={false} tickFormatter={(val) => `${val / 1000}k`} />
+                <Tooltip cursor={{ fill: palette.cursor, opacity: 0.35 }} content={<ChartTooltip />} />
+                {!hidden.used ? (
+                  <Bar
+                    dataKey="used"
+                    name="Used"
+                    fill="#4493f8"
+                    maxBarSize={18}
+                    cursor="pointer"
+                    onClick={(entry) => {
+                      const name = (entry as { name?: string }).name ?? "";
+                      setTenant((current) => (current === name ? "" : name));
+                    }}
+                  />
+                ) : null}
+                {!hidden.limit ? <Bar dataKey="limit" name="Limit" fill="#656d76" maxBarSize={18} /> : null}
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+        </Panel>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-        <Card className="relative overflow-hidden group">
-          <div className="absolute top-0 right-0 p-4 opacity-10 transform translate-x-4 -translate-y-4 group-hover:scale-110 group-hover:opacity-20 transition-all duration-500">
-            <Coins className="w-24 h-24 text-accent" />
-          </div>
-          <CardHeader className="mb-2"><CardTitle className="text-sm font-medium text-muted-foreground">Current Exchange Rate</CardTitle></CardHeader>
-          <CardContent>
-            <div className="text-3xl font-bold text-white mb-2">{currentExchangeRate.toFixed(1)} <span className="text-sm font-normal text-muted-foreground">cr/kT</span></div>
-            <p className="text-xs font-semibold text-accent">-31% <span className="text-muted-foreground font-normal ml-1">from peak</span></p>
-          </CardContent>
-        </Card>
-
-        <Card className="relative overflow-hidden group">
-          <div className="absolute top-0 right-0 p-4 opacity-10 transform translate-x-4 -translate-y-4 group-hover:scale-110 group-hover:opacity-20 transition-all duration-500">
-            <Activity className="w-24 h-24 text-secondary" />
-          </div>
-          <CardHeader className="mb-2"><CardTitle className="text-sm font-medium text-muted-foreground">System Utilization</CardTitle></CardHeader>
-          <CardContent>
-            <div className="text-3xl font-bold text-white mb-2">{systemUtilization}%</div>
-            <p className="text-xs font-semibold text-destructive">High Load (Stackelberg Active)</p>
-          </CardContent>
-        </Card>
-
-        <Card className="relative overflow-hidden group">
-          <div className="absolute top-0 right-0 p-4 opacity-10 transform translate-x-4 -translate-y-4 group-hover:scale-110 group-hover:opacity-20 transition-all duration-500">
-            <Users className="w-24 h-24 text-primary" />
-          </div>
-          <CardHeader className="mb-2"><CardTitle className="text-sm font-medium text-muted-foreground">Surplus Pool Size</CardTitle></CardHeader>
-          <CardContent>
-            <div className="text-3xl font-bold text-white mb-2">{(surplusPoolSize / 1000).toFixed(1)}k <span className="text-sm font-normal text-muted-foreground">tokens</span></div>
-            <p className="text-xs font-semibold text-primary">Available for VCG Auction</p>
-          </CardContent>
-        </Card>
-      </div>
-
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <Card>
-          <CardHeader><CardTitle>Stackelberg Pricing Trend</CardTitle></CardHeader>
-          <CardContent>
-            <div className="h-[300px] w-full mt-4">
-              <ResponsiveContainer width="100%" height="100%">
-                <LineChart data={priceTrendData} margin={{ top: 10, right: 30, left: 0, bottom: 0 }}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" vertical={false} />
-                  <XAxis dataKey="time" stroke="#475569" fontSize={12} tickLine={false} axisLine={false} />
-                  <YAxis stroke="#475569" fontSize={12} tickLine={false} axisLine={false} />
-                  <Tooltip contentStyle={{ backgroundColor: '#0f172a', borderColor: '#334155', borderRadius: '8px' }} />
-                  <Line type="stepAfter" dataKey="rate" name="Credits / 1k Tokens" stroke="#8b5cf6" strokeWidth={3} dot={{r: 4, fill: '#8b5cf6'}} />
-                </LineChart>
-              </ResponsiveContainer>
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader><CardTitle>Tenant Quota Utilization</CardTitle></CardHeader>
-          <CardContent>
-            <div className="h-[300px] w-full mt-4">
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={tenantQuotaData} margin={{ top: 10, right: 10, left: -10, bottom: 0 }}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" vertical={false} />
-                  <XAxis dataKey="name" stroke="#475569" fontSize={12} tickLine={false} axisLine={false} />
-                  <YAxis stroke="#475569" fontSize={12} tickLine={false} axisLine={false} tickFormatter={(val) => `${val/1000}k`} />
-                  <Tooltip cursor={{fill: '#1e293b', opacity: 0.4}} contentStyle={{ backgroundColor: '#0f172a', borderColor: '#334155', borderRadius: '8px' }} />
-                  <Bar dataKey="used" name="Used Tokens" fill="#3b82f6" radius={[4, 4, 0, 0]} />
-                  <Bar dataKey="limit" name="Daily Limit" fill="#334155" radius={[4, 4, 0, 0]} />
-                </BarChart>
-              </ResponsiveContainer>
-            </div>
-          </CardContent>
-        </Card>
-      </div>
-
-      <Card>
-        <CardHeader><CardTitle>Immutable Ledger Feed (Recent Token Borrows)</CardTitle></CardHeader>
-        <CardContent>
-          <div className="overflow-x-auto mt-4">
-            <table className="w-full text-sm text-left text-muted-foreground">
-              <thead className="text-xs text-white uppercase bg-white/5 border-b border-white/10">
-                <tr>
-                  <th scope="col" className="px-6 py-3 rounded-tl-lg">Tx ID</th>
-                  <th scope="col" className="px-6 py-3">Borrower</th>
-                  <th scope="col" className="px-6 py-3">Lender</th>
-                  <th scope="col" className="px-6 py-3">Tokens</th>
-                  <th scope="col" className="px-6 py-3">Rate</th>
-                  <th scope="col" className="px-6 py-3 text-right">Credits Paid</th>
-                  <th scope="col" className="px-6 py-3 text-right rounded-tr-lg">Time</th>
-                </tr>
-              </thead>
-              <tbody>
-                {ledgerTransactions.map((tx, i) => (
-                  <motion.tr 
-                    initial={{ opacity: 0, x: -10 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: i * 0.1 }}
-                    key={tx.txId} 
-                    className="bg-transparent border-b border-white/5 hover:bg-white/5 transition-colors"
-                  >
-                    <td className="px-6 py-4 font-mono text-xs">{tx.txId}</td>
-                    <td className="px-6 py-4 font-semibold text-white">{tx.borrower}</td>
-                    <td className="px-6 py-4 text-primary">{tx.lender}</td>
-                    <td className="px-6 py-4">{tx.tokens.toLocaleString()}</td>
-                    <td className="px-6 py-4">{tx.rate.toFixed(1)}</td>
-                    <td className="px-6 py-4 text-right font-bold text-accent">{tx.credits.toFixed(1)}</td>
-                    <td className="px-6 py-4 text-right text-xs">{tx.time}</td>
-                  </motion.tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </CardContent>
-      </Card>
+      <Panel title="ledger.vcg" meta={tenant || "immutable"}>
+        <DataTable
+          filterPlaceholder="Filter tx id, tenant"
+          empty="No borrows in this window"
+          rowKey={(row) => row.txId}
+          rows={rows}
+          copyValue={(row) => `${row.txId}\t${row.borrower}\t${row.lender}\t${row.tokens}\t${row.rate}`}
+          renderExpanded={(row) => (
+            <p>
+              {row.txId}: {row.borrower} borrowed {row.tokens.toLocaleString()} tok from {row.lender} @ {row.rate.toFixed(1)} cr/kT ({row.credits.toFixed(1)} credits)
+            </p>
+          )}
+          columns={[
+            { id: "tx", header: "Tx", mono: true, value: (row) => row.txId },
+            { id: "borrower", header: "Borrower", value: (row) => row.borrower },
+            { id: "lender", header: "Lender", value: (row) => row.lender },
+            { id: "tokens", header: "Tokens", align: "right", mono: true, value: (row) => row.tokens.toLocaleString() },
+            { id: "rate", header: "Rate", align: "right", mono: true, value: (row) => row.rate.toFixed(1) },
+            { id: "credits", header: "Credits", align: "right", mono: true, value: (row) => row.credits.toFixed(1) },
+            { id: "time", header: "Time", align: "right", mono: true, value: (row) => row.time },
+          ]}
+        />
+      </Panel>
     </div>
   );
 }

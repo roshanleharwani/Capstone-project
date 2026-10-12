@@ -9,10 +9,12 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * Alternative Tier 1 Connector — Self-hosted vLLM (Llama 2)
+ * Tier-3 connector — self-hosted vLLM (Llama 3 8B Instruct) on AWS GPU nodes
+ * ({@code g4dn.xlarge} in {@code ap-south-1}, service {@code nexus-vllm:8000}).
  *
- * Use this connector instead of Tier1Connector to route requests to a local
- * vLLM instance running on GPU nodes within the cluster.
+ * <p>Used as cascade fallback when Bedrock / OpenAI are unavailable or the
+ * router elects the local model. Requires the GPU node group to be scaled up
+ * (see {@code deploy/scripts/llm-gpu-scale.ps1}).
  */
 @Service
 public class VllmConnector {
@@ -23,7 +25,7 @@ public class VllmConnector {
     public VllmConnector(
             WebClient.Builder webClientBuilder,
             @Value("${VLLM_INFERENCE_URL:http://nexus-vllm.nexus-gateway.svc.cluster.local:8000}") String vllmUrl,
-            @Value("${nexus.vllm.model-id:meta-llama/Llama-2-7b-chat-hf}") String modelId) {
+            @Value("${nexus.vllm.model-id:llama3-8b-instruct}") String modelId) {
         this.webClient = webClientBuilder.baseUrl(vllmUrl).build();
         this.modelId = modelId;
     }

@@ -213,6 +213,10 @@ public class OpenAIChatController {
                 .header("X-Pipeline-PII-Entities", piiEntities)
                 .header("X-Pipeline-Cache-Hit", String.valueOf(isCacheHit))
                 .header("X-Pipeline-Tokens-Traded", String.valueOf(tokensTraded))
+                .header("X-Quota-Borrowed", String.valueOf(approval.getTokensBorrowed()))
+                .header("X-Quota-Remaining", String.valueOf(approval.getQuotaRemaining()))
+                .header("X-Quota-Credits", String.valueOf(approval.getCreditsCharged()))
+                .header("X-Quota-Auction-Cleared", String.valueOf(approval.isAuctionCleared()))
                 .header("X-Router-Compression-Ratio", String.valueOf(compressionRatio))
                 .header("X-Router-Latency-Ms", String.valueOf(routerLatency))
                 .body(rehydratedResponse);

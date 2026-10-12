@@ -91,7 +91,7 @@ public class CreditLedgerService {
         LedgerEntry debit = new LedgerEntry(
                 borrowerTenantId, lenderTenantId,
                 LedgerEntry.EntryType.DEBIT, creditAmount, desc,
-                computeHash(borrowerTenantId, LedgerEntry.EntryType.DEBIT, creditAmount, txId)
+                computeChainedHash(borrowerTenantId, LedgerEntry.EntryType.DEBIT, creditAmount, txId)
         );
         ledgerRepository.save(debit);
 
@@ -99,7 +99,7 @@ public class CreditLedgerService {
         LedgerEntry credit = new LedgerEntry(
                 lenderTenantId, borrowerTenantId,
                 LedgerEntry.EntryType.CREDIT, creditAmount, desc,
-                computeHash(lenderTenantId, LedgerEntry.EntryType.CREDIT, creditAmount, txId)
+                computeChainedHash(lenderTenantId, LedgerEntry.EntryType.CREDIT, creditAmount, txId)
         );
         ledgerRepository.save(credit);
 
@@ -136,7 +136,7 @@ public class CreditLedgerService {
         LedgerEntry credit = new LedgerEntry(
                 borrowerTenantId, lenderTenantId,
                 LedgerEntry.EntryType.CREDIT, creditAmount, desc,
-                computeHash(borrowerTenantId, LedgerEntry.EntryType.CREDIT, creditAmount, txId)
+                computeChainedHash(borrowerTenantId, LedgerEntry.EntryType.CREDIT, creditAmount, txId)
         );
         ledgerRepository.save(credit);
 
@@ -144,7 +144,7 @@ public class CreditLedgerService {
         LedgerEntry debit = new LedgerEntry(
                 lenderTenantId, borrowerTenantId,
                 LedgerEntry.EntryType.DEBIT, creditAmount, desc,
-                computeHash(lenderTenantId, LedgerEntry.EntryType.DEBIT, creditAmount, txId)
+                computeChainedHash(lenderTenantId, LedgerEntry.EntryType.DEBIT, creditAmount, txId)
         );
         ledgerRepository.save(debit);
 
@@ -190,8 +190,9 @@ public class CreditLedgerService {
      */
     public boolean verifyEntryIntegrity(String entryId) {
         return ledgerRepository.findById(entryId).map(entry -> {
+            String prevHash = previousHashBefore(entry);
             String recomputed = computeHash(entry.getTenantId(), entry.getEntryType(),
-                    entry.getAmount(), entry.getId());
+                    entry.getAmount(), entry.getId(), prevHash);
             boolean valid = recomputed.equals(entry.getTransactionHash());
             if (!valid) {
                 log.warn("[Ledger] INTEGRITY FAILURE entryId={} tenant={}",
@@ -203,15 +204,27 @@ public class CreditLedgerService {
 
     // ---- Private helpers -------------------------------------------------
 
-    /**
-     * Computes SHA-256(tenantId + entryType + amount + nonce).
-     * In a full implementation, the nonce would be the previous entry's hash
-     * to form a proper chain. Simplified here to use the transaction UUID.
-     */
+    private String computeChainedHash(String tenantId, LedgerEntry.EntryType entryType,
+                                      double amount, String nonce) {
+        String prevHash = ledgerRepository.findTopByTenantIdOrderByTimestampDesc(tenantId)
+                .map(LedgerEntry::getTransactionHash)
+                .orElse("GENESIS");
+        return computeHash(tenantId, entryType, amount, nonce, prevHash);
+    }
+
+    private String previousHashBefore(LedgerEntry entry) {
+        return ledgerRepository.findByTenantIdOrderByTimestampDesc(entry.getTenantId()).stream()
+                .filter(e -> !e.getId().equals(entry.getId()))
+                .findFirst()
+                .map(LedgerEntry::getTransactionHash)
+                .orElse("GENESIS");
+    }
+
+    /** SHA-256(tenantId|entryType|amount|nonce|prevHash) forward-linked chain. */
     private String computeHash(String tenantId, LedgerEntry.EntryType entryType,
-                                double amount, String nonce) {
+                               double amount, String nonce, String prevHash) {
         try {
-            String payload = tenantId + "|" + entryType.name() + "|" + amount + "|" + nonce;
+            String payload = tenantId + "|" + entryType.name() + "|" + amount + "|" + nonce + "|" + prevHash;
             MessageDigest digest = MessageDigest.getInstance("SHA-256");
             byte[] hashBytes = digest.digest(payload.getBytes(StandardCharsets.UTF_8));
             return HexFormat.of().formatHex(hashBytes);

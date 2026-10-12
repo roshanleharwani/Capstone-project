@@ -5,12 +5,32 @@ target/
 *.war
 *.ear
 
+# Secrets & local env (never commit)
+.env
+.env.*
+!.env.example
+**/.env
+**/.env.*
+!**/.env.example
+**/application-local.yml
+**/application-local.properties
+**/secrets/
+*.pem
+*.p12
+*.jks
+
 # Terraform state (sensitive - keep local only)
 terraform.tfstate
 terraform.tfstate.backup
 *.tfstate
 *.tfstate.*
 .terraform/
+crash.log
+crash.*.log
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
 
 # Logs
 *.log
@@ -24,8 +44,9 @@ node_modules/
 .next/
 .npm/
 
-# IDE
+# IDE / agent local
 .idea/
+.cursor/
 *.iml
 .vscode/
 *.suo

@@ -156,14 +156,26 @@ class StackelbergPricingEngineTest {
     }
 
     @Test
-    @DisplayName("shouldBorrow returns true when there is a deficit and rate <= p_max")
+    @DisplayName("shouldBorrow returns true when there is a deficit and rate is below near-ceiling")
     void shouldBorrow_deficitAndAcceptableRate_returnsTrue() {
-        assertThat(engine.shouldBorrow(10_000L, P_MAX - 0.1)).isTrue();
+        assertThat(engine.shouldBorrow(10_000L, P_MAX * 0.9)).isTrue();
     }
 
     @Test
     @DisplayName("shouldBorrow returns false when no deficit")
     void shouldBorrow_noDeficit_returnsFalse() {
         assertThat(engine.shouldBorrow(0L, P_MIN)).isFalse();
+    }
+
+    @Test
+    @DisplayName("shouldBorrow returns false near p_max panic pricing")
+    void shouldBorrow_nearCeiling_returnsFalse() {
+        assertThat(engine.shouldBorrow(10_000L, P_MAX)).isFalse();
+    }
+
+    @Test
+    @DisplayName("shouldBorrow returns false when deficit exceeds hard cap")
+    void shouldBorrow_hugeDeficit_returnsFalse() {
+        assertThat(engine.shouldBorrow(5_000_000L, P_MIN)).isFalse();
     }
 }

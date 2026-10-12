@@ -114,11 +114,17 @@ export async function POST(req: NextRequest) {
           const cacheHitHeader = upstream.headers.get("X-Pipeline-Cache-Hit");
           const compressionRatioHeader = upstream.headers.get("X-Router-Compression-Ratio");
           const routerLatencyHeader = upstream.headers.get("X-Router-Latency-Ms");
+          const quotaBorrowedHeader = upstream.headers.get("X-Quota-Borrowed");
+          const quotaRemainingHeader = upstream.headers.get("X-Quota-Remaining");
+          const quotaCreditsHeader = upstream.headers.get("X-Quota-Credits");
           
           const piiDetected = piiCountHeader ? parseInt(piiCountHeader, 10) : 0;
           const piiEntities = piiEntitiesHeader ? piiEntitiesHeader.split(",").filter(Boolean) : [];
           const cacheHit = cacheHitHeader === "true";
           const isGpt = data.model && data.model.includes("gpt");
+          const quotaBorrowed = quotaBorrowedHeader ? parseInt(quotaBorrowedHeader, 10) : 0;
+          const quotaRemaining = quotaRemainingHeader ? parseInt(quotaRemainingHeader, 10) : 0;
+          const quotaCredits = quotaCreditsHeader ? parseFloat(quotaCreditsHeader) : 0;
           
           const compressionRatio = compressionRatioHeader ? parseFloat(compressionRatioHeader) : 1.0;
           const routerLatency = routerLatencyHeader ? parseInt(routerLatencyHeader, 10) : 15;
@@ -139,8 +145,9 @@ export async function POST(req: NextRequest) {
                 status: "passed",
                 durationMs: 12,
                 tenant,
-                quotaRemaining: 999999, // Actual quota system not integrated yet
-                quotaBorrowed: 0,
+                quotaRemaining: Number.isFinite(quotaRemaining) ? quotaRemaining : 0,
+                quotaBorrowed,
+                creditsCharged: Number.isFinite(quotaCredits) ? quotaCredits : 0,
               },
               compression: {
                 status: "passed",

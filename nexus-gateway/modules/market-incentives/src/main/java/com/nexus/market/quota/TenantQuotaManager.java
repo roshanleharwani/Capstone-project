@@ -8,22 +8,14 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
-import java.util.Optional;
+import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.List;
+import java.util.function.Predicate;
 
 /**
  * Service responsible for intercepting tenant requests and verifying available
  * daily API token balances.
- *
- * <p><b>Core responsibility (Task 1):</b> Reads the {@code X-Tenant-ID} header,
- * looks up the tenant's quota record, and either:
- * <ul>
- *   <li>Decrements the token count and returns a {@link QuotaCheckResult#sufficient} result</li>
- *   <li>Returns a {@link QuotaCheckResult#deficit} result to trigger the NexusMarket pipeline</li>
- * </ul>
- *
- * <p>System-wide utilization {@code U} is computed as the fraction of all tenants'
- * combined token budget that has been consumed. This value is forwarded to the
- * {@code StackelbergPricingEngine} to set the current exchange rate.
  */
 @Service
 public class TenantQuotaManager {
@@ -35,27 +27,22 @@ public class TenantQuotaManager {
     @Value("${market.quota.default-daily-limit:1000000}")
     private long defaultDailyLimit;
 
+    /**
+     * Fraction of a lender's remaining surplus that may be committed in one auction
+     * (keeps lenders from being stripped bare).
+     */
+    @Value("${market.quota.lend-fraction:0.5}")
+    private double lendFraction;
+
     public TenantQuotaManager(TenantQuotaRepository quotaRepository) {
         this.quotaRepository = quotaRepository;
     }
 
-    /**
-     * Checks whether {@code tenantId} has enough tokens for the request and, if so,
-     * atomically reserves (decrements) them from the quota record.
-     *
-     * <p>If the tenant record does not exist yet, a new record is auto-provisioned
-     * with {@code defaultDailyLimit} tokens and a reset time of midnight UTC today+1.
-     *
-     * @param tenantId    the value of the {@code X-Tenant-ID} request header
-     * @param tokensNeeded estimated token cost of the incoming request
-     * @return {@link QuotaCheckResult} indicating surplus or deficit state
-     */
     @Transactional
     public QuotaCheckResult checkAndReserve(String tenantId, long tokensNeeded) {
         TenantQuota quota = quotaRepository.findByTenantId(tenantId)
                 .orElseGet(() -> provisionNewTenant(tenantId));
 
-        // Auto-reset quota window if the reset timestamp has passed
         if (Instant.now().isAfter(quota.getResetAt())) {
             log.info("[QuotaManager] Resetting quota window for tenant={}", tenantId);
             quota.setUsedTokens(0L);
@@ -66,27 +53,18 @@ public class TenantQuotaManager {
         long remaining = quota.remainingTokens();
 
         if (remaining >= tokensNeeded) {
-            // Sufficient — reserve the tokens optimistically
             quota.setUsedTokens(quota.getUsedTokens() + tokensNeeded);
             quotaRepository.save(quota);
             log.debug("[QuotaManager] PASS tenant={} reserved={} remaining={}",
                     tenantId, tokensNeeded, remaining - tokensNeeded);
             return QuotaCheckResult.sufficient(remaining - tokensNeeded, tokensNeeded, systemUtilization);
-        } else {
-            // Deficit — do NOT decrement; let the market pipeline handle allocation
-            log.info("[QuotaManager] DEFICIT tenant={} needed={} remaining={} deficit={}",
-                    tenantId, tokensNeeded, remaining, tokensNeeded - remaining);
-            return QuotaCheckResult.deficit(remaining, tokensNeeded, systemUtilization);
         }
+
+        log.info("[QuotaManager] DEFICIT tenant={} needed={} remaining={} deficit={}",
+                tenantId, tokensNeeded, remaining, tokensNeeded - remaining);
+        return QuotaCheckResult.deficit(remaining, tokensNeeded, systemUtilization);
     }
 
-    /**
-     * Releases previously reserved tokens back to the tenant's quota.
-     * Called by the Cascade Guard if the request is escalated or fails.
-     *
-     * @param tenantId    the tenant whose reservation to release
-     * @param tokensToReturn number of tokens to release
-     */
     @Transactional
     public void releaseReservation(String tenantId, long tokensToReturn) {
         quotaRepository.findByTenantId(tenantId).ifPresent(quota -> {
@@ -97,33 +75,96 @@ public class TenantQuotaManager {
     }
 
     /**
-     * Adds borrowed tokens to a tenant's effective daily limit after a successful
-     * auction allocation, allowing the request to proceed.
-     *
-     * @param tenantId       the borrowing tenant
-     * @param borrowedTokens tokens granted from the surplus pool
+     * Increases the borrower's daily limit by the auction allocation, then reserves
+     * the tokens for the current request so the win actually consumes budget.
      */
     @Transactional
-    public void applyBorrowedTokens(String tenantId, long borrowedTokens) {
-        quotaRepository.findByTenantId(tenantId).ifPresent(quota -> {
+    public void grantBorrowAndReserve(String tenantId, long borrowedTokens, long tokensNeeded) {
+        TenantQuota quota = quotaRepository.findByTenantId(tenantId)
+                .orElseThrow(() -> new IllegalStateException("Unknown tenant: " + tenantId));
+
+        if (borrowedTokens > 0) {
             quota.setDailyLimit(quota.getDailyLimit() + borrowedTokens);
-            quotaRepository.save(quota);
-            log.info("[QuotaManager] BORROW_GRANT tenant={} extra={}", tenantId, borrowedTokens);
-        });
+        }
+        long available = quota.remainingTokens();
+        long reserve = Math.min(tokensNeeded, available);
+        quota.setUsedTokens(quota.getUsedTokens() + reserve);
+        quotaRepository.save(quota);
+        log.info("[QuotaManager] BORROW_GRANT_RESERVE tenant={} borrowed={} reserved={} remaining={}",
+                tenantId, borrowedTokens, reserve, quota.remainingTokens());
     }
 
-    // ---- Private helpers -------------------------------------------------
+    /** @deprecated Prefer {@link #grantBorrowAndReserve(String, long, long)}. */
+    @Transactional
+    public void applyBorrowedTokens(String tenantId, long borrowedTokens) {
+        grantBorrowAndReserve(tenantId, borrowedTokens, 0L);
+    }
 
     /**
-     * Computes system-wide utilization U = total_used / total_limit across all tenants.
-     * Returns 0.0 if no tenants are registered.
+     * Surplus tokens that eligible lenders are willing to commit (excludes the borrower).
      */
+    public long computeLendablePool(String borrowerTenantId, Predicate<TenantQuota> lenderEligible) {
+        return findEligibleLenders(borrowerTenantId, lenderEligible).stream()
+                .mapToLong(this::lendableFrom)
+                .sum();
+    }
+
+    /**
+     * Deducts {@code tokensNeeded} from surplus lenders (largest surplus first).
+     * Marks committed tokens by increasing each lender's {@code usedTokens}.
+     */
+    @Transactional
+    public List<LenderContribution> deductFromLenders(String borrowerTenantId,
+                                                      long tokensNeeded,
+                                                      Predicate<TenantQuota> lenderEligible) {
+        if (tokensNeeded <= 0) {
+            return List.of();
+        }
+
+        List<TenantQuota> lenders = findEligibleLenders(borrowerTenantId, lenderEligible);
+        long remaining = tokensNeeded;
+        List<LenderContribution> contributions = new ArrayList<>();
+
+        for (TenantQuota lender : lenders) {
+            if (remaining <= 0) {
+                break;
+            }
+            long lendable = lendableFrom(lender);
+            if (lendable <= 0) {
+                continue;
+            }
+            long take = Math.min(lendable, remaining);
+            lender.setUsedTokens(lender.getUsedTokens() + take);
+            quotaRepository.save(lender);
+            contributions.add(new LenderContribution(lender.getTenantId(), take));
+            remaining -= take;
+            log.info("[QuotaManager] LEND tenant={} lent={} to borrower={}",
+                    lender.getTenantId(), take, borrowerTenantId);
+        }
+
+        if (remaining > 0) {
+            log.warn("[QuotaManager] Could only collect {} of {} requested lend tokens",
+                    tokensNeeded - remaining, tokensNeeded);
+        }
+        return contributions;
+    }
+
+    private List<TenantQuota> findEligibleLenders(String borrowerTenantId,
+                                                  Predicate<TenantQuota> lenderEligible) {
+        return quotaRepository.findTenantsWithSurplus().stream()
+                .filter(q -> !q.getTenantId().equals(borrowerTenantId))
+                .filter(q -> lenderEligible == null || lenderEligible.test(q))
+                .sorted(Comparator.comparingLong(TenantQuota::remainingTokens).reversed())
+                .toList();
+    }
+
+    private long lendableFrom(TenantQuota lender) {
+        double fraction = Math.max(0.0, Math.min(1.0, lendFraction));
+        return (long) Math.floor(lender.remainingTokens() * fraction);
+    }
+
     private double computeSystemUtilization() {
-        // Fetch aggregate stats using JPQL — avoids loading all rows into memory
         long totalSurplus = quotaRepository.computeTotalSurplusTokens();
-        // Derive totalLimit from surplus + a simple aggregate across all quotas
-        // For simplicity: U = 1 - (totalSurplus / defaultDailyLimit_per_tenant * tenantCount)
-        // In production this would be a dedicated aggregate query; here we use a heuristic
         long count = quotaRepository.count();
         if (count == 0) return 0.0;
         long estimatedTotalLimit = count * defaultDailyLimit;
@@ -132,7 +173,6 @@ public class TenantQuotaManager {
         return Math.max(0.0, Math.min(1.0, utilization));
     }
 
-    /** Auto-provisions a new TenantQuota with default limits. */
     private TenantQuota provisionNewTenant(String tenantId) {
         log.info("[QuotaManager] Auto-provisioning new tenant={}", tenantId);
         Instant resetAt = Instant.now().truncatedTo(ChronoUnit.DAYS).plus(1, ChronoUnit.DAYS);

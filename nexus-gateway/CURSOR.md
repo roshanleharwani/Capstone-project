@@ -563,8 +563,16 @@ Both are in `.gitignore`. The `target/` dirs contain 50MB+ JARs that will break 
 ### 4. OpenAI API key is hardcoded in `application.yml`
 Found in `modules/router-dashboard/src/main/resources/application.yml`. If it expires, replace it there and redeploy the router.
 
-### 5. `nexus-vllm` (llama.cpp) downloads a 4.7GB model on pod start
-The `nexus-vllm.yaml` has an initContainer that downloads `Meta-Llama-3-8B-Instruct-Q4_K_M.gguf` from HuggingFace every time the pod starts. This takes ~10 minutes on first boot. It only activates as Tier-3 fallback.
+### 5. Tier-3 GPU LLM (vLLM on `g4dn.xlarge`) stays at desired_size=0 by default
+AWS G/VT quota in `ap-south-1` allows up to 4 instances. Terraform defines `gpu_llm_nodes` but **does not start GPUs** until you scale up:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File deploy\scripts\llm-gpu-scale.ps1 -Action up
+kubectl apply -f deploy/kube/nvidia-device-plugin.yaml
+kubectl apply -f deploy/kube/nexus-vllm.yaml -n nexus-gateway
+```
+
+Scale back to 0 with `-Action down` to stop GPU billing. HF gated models need `HF_TOKEN` in secret `nexus-vllm-hf`.
 
 ### 6. Kafka must be running before nexus-proxy starts
 If `KafkaTelemetryPublisher` can't connect, the proxy will still serve requests but telemetry events will be lost. Deploy kafka first (step 3 of first-time deploy).

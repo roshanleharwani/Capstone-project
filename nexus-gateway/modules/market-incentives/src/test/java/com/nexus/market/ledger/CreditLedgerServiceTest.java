@@ -58,6 +58,8 @@ class CreditLedgerServiceTest {
     @BeforeEach
     void setUp() {
         ReflectionTestUtils.setField(ledgerService, "balanceCacheTtlSeconds", 30L);
+        lenient().when(ledgerRepository.findTopByTenantIdOrderByTimestampDesc(anyString()))
+                .thenReturn(Optional.empty());
     }
 
     // ---- recordTokenBorrow: entry creation ------------------------------
